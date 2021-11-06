@@ -6,11 +6,11 @@ from QGMultiNet import MultiNetTuner, GMultiNet, QMultiNet, MultiNetTrainer
 from data_gen import generate_data, sigm, inv_sigm, IHDP
 import torch
 import statsmodels.api as sm
-from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, RandomForestRegressor, AdaBoostRegressor
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from super_learner import SuperLearner
-from sklearn.svm import SVC
+from sklearn.svm import SVC, SVR
 import traceback
 from datetime import datetime
 
@@ -20,6 +20,18 @@ now = datetime.now()
 current_time = now.strftime("%H:%M:%S")
 
 
+def init_super_dict(output_type):
+
+    if output_type == 'categorical':
+        est_dict = {'LR': LogisticRegression(), 'SVC': SVC(probability=True),
+                     'RF': RandomForestClassifier(), 'KNN': KNeighborsClassifier(),
+                     'AB': AdaBoostClassifier(), 'poly': 'poly'}
+    else:
+        est_dict = {'LR': LinearRegression(), 'SVR': SVR(),
+                    'RF': RandomForestRegressor(), 'KNN': KNeighborsRegressor(),
+                    'AB': AdaBoostRegressor(), 'poly': 'poly'}
+    return est_dict
+
 def one_step(x_, y_, Q0, Q1, G10):
     D0 = ((1 - x_) * (y_ - Q0)) / (1 - G10) + Q0 - Q0.mean()
     D1 = (x_ * (y_ - Q1) / G10) + Q1 - Q1.mean()
@@ -27,16 +39,21 @@ def one_step(x_, y_, Q0, Q1, G10):
     Q0_star = Q0 + D0
     return Q1_star, Q0_star
 
-def submodel(x_, y_, Q1, Q0, Q10, G10):
-
+def submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type):
     H1 = x_ / (G10)
     H0 = (1 - x_) / (1 - G10)
 
-    eps0, eps1 = sm.GLM(y_, np.concatenate([H0, H1], 1), offset=inv_sigm(Q10[:, 0]),
-                        family=sm.families.Binomial()).fit().params
+    if outcome_type == 'categorical':
+        eps0, eps1 = sm.GLM(y_, np.concatenate([H0, H1], 1), offset=inv_sigm(Q10[:, 0]),
+                            family=sm.families.Binomial()).fit().params
+        Q0_star_solve = sigm(inv_sigm(Q0) + eps0 / (1 - G10))
+        Q1_star_solve = sigm(inv_sigm(Q1) + eps1 / G10)
+    else:
+        eps0, eps1 = sm.GLM(y_, np.concatenate([H0, H1], 1), offset=Q10[:,0],
+                            family=sm.families.Gaussian()).fit().params
+        Q0_star_solve = Q0 + (eps0 / (1 - G10))
+        Q1_star_solve = Q1 + (eps1 / G10)
 
-    Q0_star_solve = sigm(inv_sigm(Q0) + eps0 / (1 - G10))
-    Q1_star_solve = sigm(inv_sigm(Q1) + eps1 / G10)
     return Q1_star_solve, Q0_star_solve
 
 
@@ -56,13 +73,19 @@ class TrainTest(object):
         self.run_NN_SL = config.run_NN_SL
         self.run_treg_SL = config.run_treg_SL
         self.multinet = config.run_NN_or_multinet
-        self.output = config.SL_output
+        self.SL_output = config.SL_output
         self.dataset = config.dataset
         self.starting_iter = config.starting_iter
         self.gpu = config.gpu
         self.device = 'cpu'
+
+        self.output_type = 'continuous' if self.dataset == 'IHDP' else 'categorical'
+        if self.dataset == 'IHDP':
+            self.SL_output = 'reg'
+
         if self.gpu == 1:
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
         self.fn = ''
 
 
@@ -119,6 +142,7 @@ class TrainTest(object):
         # init seed
         seed = self.starting_iter  # this was set to 100 previously (no reason)
         i = self.starting_iter
+        tuning_count = 0
         print('Starting from seed', i)
         while (i-self.starting_iter) < self.num_runs:
             seed += 1
@@ -147,17 +171,19 @@ class TrainTest(object):
                 x_int0_ = np.zeros_like(x_)
 
                 if self.run_NN or self.run_treg or self.run_NN_SL:
+                    # if (tuning_count == 0) or (
+                    #         self.dataset == 'IHDP'):  # on synth/LF dataset, only do tuning on the first run
 
                     print('==============TUNING==============')
                     # run hyperparameter search
                     print('Tuning G')
                     if self.multinet:
-                        gtuner = MultiNetTuner(x=x, y=y, z=z, net_type='G', test_iter=self.test_iter,
+                        gtuner = MultiNetTuner(x=x, y=y, z=z, net_type='G', test_iter=self.test_iter, output_type='categorical',
                                trials=self.num_tuning_trials, use_beta=False, use_t=use_t, data_masking=self.data_masking,
                                test_loss_plot=test_loss_plot, layerwise_optim=self.layerwise_optim, device=self.device)
                     else:
                         gtuner = Tuner(x=x, y=y, z=z, net_type='G', test_iter=self.test_iter, calibration=0, device=self.device,
-                                   trials=self.num_tuning_trials, use_beta=False, use_t=use_t, test_loss_plot=test_loss_plot)
+                                   trials=self.num_tuning_trials, use_beta=False, use_t=use_t, test_loss_plot=test_loss_plot, output_type='categorical')
 
                     gtuning_history, best_g, x_pred, _ = gtuner.tune()
 
@@ -171,10 +197,10 @@ class TrainTest(object):
                     print('Tuning Q')
                     if self.multinet:
                         qtuner = MultiNetTuner(x=x, y=y, z=z, x_pred=x_pred, net_type='Q', test_iter=self.test_iter, data_masking=self.data_masking, device=self.device,
-                               trials=self.num_tuning_trials, use_beta=False, use_t=use_t, test_loss_plot=test_loss_plot, layerwise_optim=self.layerwise_optim)
+                               trials=self.num_tuning_trials, use_beta=False, use_t=use_t, test_loss_plot=test_loss_plot, layerwise_optim=self.layerwise_optim, output_type=self.output_type)
                     else:
                         qtuner = Tuner(x=x, y=y, z=z, x_pred=x_pred, net_type='Q', test_iter=self.test_iter, calibration=0, device=self.device,
-                                   trials=self.num_tuning_trials, use_beta=False, use_t=use_t, test_loss_plot=test_loss_plot)
+                                   trials=self.num_tuning_trials, use_beta=False, use_t=use_t, test_loss_plot=test_loss_plot, output_type=self.output_type)
                     qtuning_history, best_q, _, eps = qtuner.tune()
 
                     qtotal_losses = np.asarray(qtuning_history['best_model_test_loss'])
@@ -187,9 +213,9 @@ class TrainTest(object):
                     print('Tuning Q + treg')
                     if self.multinet:
                         qtregtuner = MultiNetTuner(x=x, y=y, z=z, x_pred=x_pred, net_type='Q', test_iter=self.test_iter, data_masking=self.data_masking, device=self.device,
-                                       trials=self.num_tuning_trials, use_beta=True, use_t=use_t, test_loss_plot=test_loss_plot, layerwise_optim=self.layerwise_optim)
+                                       trials=self.num_tuning_trials, use_beta=True, use_t=use_t, test_loss_plot=test_loss_plot, layerwise_optim=self.layerwise_optim, output_type=self.output_type,)
                     else:
-                        qtregtuner = Tuner(x=x, y=y, z=z, x_pred=x_pred, net_type='Q', test_iter=self.test_iter, calibration=0,
+                        qtregtuner = Tuner(x=x, y=y, z=z, x_pred=x_pred, net_type='Q', test_iter=self.test_iter, calibration=0, output_type=self.output_type,
                                trials=self.num_tuning_trials, use_beta=True, use_t=use_t, test_loss_plot=test_loss_plot, device=self.device)
                     qtregtuning_history, best_qtreg, _, epstreg = qtregtuner.tune()
 
@@ -204,7 +230,7 @@ class TrainTest(object):
                     print('Best Q with treg params:', qtregbest_params)
                     print('Best G params:', gbest_params)
 
-                    output_type_Q = 'categorical'
+                    output_type_Q = self.output_type
                     output_size_Q = 1
                     output_type_G = 'categorical'
                     output_size_G = 1
@@ -355,7 +381,7 @@ class TrainTest(object):
                     estimates_upd_1s.append((Q1_star - Q0_star).mean())
 
                     #  submodel approach
-                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10)
+                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type=self.output_type)
 
                     # record estimate
                     estimates_upd_submod.append((Q1_star_solve - Q0_star_solve).mean())
@@ -373,7 +399,7 @@ class TrainTest(object):
                         # redefine Q trainer (treg enabled)
                         qtrainer = MultiNetTrainer(net=qnet, net_type='Q', beta=1.0, iterations=qtregiters,
                                            outcome_type=output_type_Q, device=self.device,
-                                           batch_size=qtregbatch_size, test_iter=1000, lr=qtreglr,
+                                           batch_size=qtregbatch_size, test_iter=1000, lr=0.0001,
                                            weight_reg=qtregweight_reg, data_masking=self.data_masking,
                                            test_loss_plot=test_loss_plot,  split=False, layerwise_optim=self.layerwise_optim)
 
@@ -386,7 +412,7 @@ class TrainTest(object):
                                     output_type=output_type_Q, dropout=qtregdropout, use_t=use_t).to(self.device)
                         # redefine Q trainer (treg enabled)
                         qtrainer = Trainer(net=qnet, net_type='Q', beta=1.0, iterations=qtregiters, outcome_type=output_type_Q, device=self.device,
-                                           batch_size=qtregbatch_size, test_iter=1000, lr=qtreglr, weight_reg=qtregweight_reg,
+                                           batch_size=qtregbatch_size, test_iter=1000, lr=0.0001, weight_reg=qtregweight_reg,
                                            test_loss_plot=test_loss_plot, calibration=self.calibration, split=False)
 
                         # retrain Q using same x_preds which were generated ABOVE
@@ -428,7 +454,7 @@ class TrainTest(object):
                     # ------------------------PREVIOUS TREG MODEL WITH SUBMODEL UPDATE COMBINED------------------------------------------------------------
                     print('Combining TREG with submodel update')
                     #  submodel approach
-                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10)
+                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type=self.output_type)
                     # record estimate
                     estimates_upd_treg_submod.append((Q1_star_solve - Q0_star_solve).mean())
 
@@ -447,11 +473,9 @@ class TrainTest(object):
                                     output_type=output_type_Q, dropout=qdropout, use_t=use_t).to(self.device)
 
                     print('Training G....')
-                    Gest_dict = {'LR': LogisticRegression(), 'SVC': SVC(probability=True),
-                                 'RF': RandomForestClassifier(), 'KNN': KNeighborsClassifier(),
-                                 'AB': AdaBoostClassifier(), 'poly': 'poly'}
+                    Gest_dict = init_super_dict('categorical')
 
-                    GSL = SuperLearner(output=self.output, est_dict=Gest_dict, k=self.k)
+                    GSL = SuperLearner('cls', est_dict=Gest_dict, k=self.k)
                     GSL.train_combiner(z_, x_[:, 0])
                     GSL.train_superlearner(z_, x_[:, 0])
                     x_pred = np.clip(GSL.estimation(z_, x_[:, 0]), a_min=0.025, a_max=0.975)
@@ -517,7 +541,7 @@ class TrainTest(object):
                     estimates_upd_1s_halfSL.append((Q1_star - Q0_star).mean())
 
                     #  submodel approach
-                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10)
+                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type=self.output_type)
                     # record estimate
                     estimates_upd_submod_halfSL.append((Q1_star_solve - Q0_star_solve).mean())
 
@@ -532,7 +556,7 @@ class TrainTest(object):
                                     output_type=output_type_Q, dropout=qtregdropout, use_t=use_t, layerwise_optim=self.layerwise_optim).to(self.device)
                         # redefine Q trainer (treg enabled)
                         qtrainer = MultiNetTrainer(net=qnet, net_type='Q', beta=1.0, iterations=qtregiters, outcome_type=output_type_Q,
-                                           batch_size=qtregbatch_size, test_iter=1000, lr=qtreglr, device=self.device,
+                                           batch_size=qtregbatch_size, test_iter=1000, lr=0.0001, device=self.device,
                                            weight_reg=qtregweight_reg, data_masking=self.data_masking,
                                            test_loss_plot=test_loss_plot, split=False, layerwise_optim=self.layerwise_optim)
 
@@ -545,7 +569,7 @@ class TrainTest(object):
                                     output_type=output_type_Q, dropout=qtregdropout, use_t=use_t).to(self.device)
                         # redefine Q trainer (treg enabled)
                         qtrainer = Trainer(net=qnet, net_type='Q', beta=1.0, iterations=qtregiters, outcome_type=output_type_Q, device=self.device,
-                                           batch_size=qtregbatch_size, test_iter=1000, lr=qtreglr, weight_reg=qtregweight_reg,
+                                           batch_size=qtregbatch_size, test_iter=1000, lr=0.0001, weight_reg=qtregweight_reg,
                                            test_loss_plot=test_loss_plot, calibration=self.calibration, split=False)
 
                         # retrain Q using same x_preds which were generated ABOVE
@@ -585,24 +609,30 @@ class TrainTest(object):
 
                     # ------------------------PREVIOUS TREG MODEL WITH SUBMODEL UPDATE COMBINED and SL ------------------------------------------------------------
                     print('Combining TREG with submodel update')
-                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10)
+                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type=self.output_type)
                     # record estimate
                     estimates_upd_treg_submod_halfSL.append((Q1_star_solve - Q0_star_solve).mean())
 
                 if self.run_LR:
                     # ------------------------LOG REG------------------------------------------------------------
                     print('Running LR...')
-                    Q = LogisticRegression().fit(np.concatenate([x_, z_], 1), y_[:, 0])
-                    Q1 = np.clip(Q.predict_proba((np.concatenate([x_int1_, z_], 1)))[:, 1:], a_min=0.025, a_max=0.975)
-                    Q0 = np.clip(Q.predict_proba((np.concatenate([x_int0_, z_], 1)))[:, 1:], a_min=0.025, a_max=0.975)
-                    Q10 = np.clip(Q.predict_proba((np.concatenate([x_, z_], 1)))[:, 1:], a_min=0.025, a_max=0.975)
+                    if self.output_type == 'categorical':
+                        Q = LogisticRegression().fit(np.concatenate([x_, z_], 1), y_[:, 0])
+                        Q1 = np.clip(Q.predict_proba((np.concatenate([x_int1_, z_], 1)))[:, 1:], a_min=0.025, a_max=0.975)
+                        Q0 = np.clip(Q.predict_proba((np.concatenate([x_int0_, z_], 1)))[:, 1:], a_min=0.025, a_max=0.975)
+                        Q10 = np.clip(Q.predict_proba((np.concatenate([x_, z_], 1)))[:, 1:], a_min=0.025, a_max=0.975)
+                    else:
+                        Q = LinearRegression().fit(np.concatenate([x_, z_], 1), y_[:, 0])
+                        Q1 = Q.predict((np.concatenate([x_int1_, z_], 1))).reshape(-1, 1)
+                        Q0 = Q.predict((np.concatenate([x_int0_, z_], 1))).reshape(-1, 1)
+                        Q10 = Q.predict((np.concatenate([x_, z_], 1))).reshape(-1, 1)
                     biased_psi = (Q1 - Q0).mean()
 
                     G = LogisticRegression().fit(z_, x_[:, 0])
                     G10 = np.clip(G.predict_proba(z_), a_min=0.025, a_max=0.975)[:, 1:]
 
                     # submodel approach
-                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10)
+                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type=self.output_type)
 
                     # one step approach
                     Q1_star, Q0_star = one_step(x_, y_, Q0, Q1, G10)
@@ -614,34 +644,33 @@ class TrainTest(object):
                 if self.run_SL:
                     print('Running SL...')
                     # ------------------------SUPER LEARNER------------------------------------------------------------
-                    Qest_dict = {'LR': LogisticRegression(), 'SVC': SVC(probability=True),
-                                 'RF': RandomForestClassifier(), 'KNN': KNeighborsClassifier(),
-                                 'AB': AdaBoostClassifier(), 'poly': 'poly'}
+                    Qest_dict = init_super_dict(self.output_type)
 
-
-                    QSL = SuperLearner(output=self.output, est_dict=Qest_dict, k=self.k)
+                    QSL = SuperLearner(output=self.SL_output, est_dict=Qest_dict, k=self.k)
                     QSL.train_combiner(np.concatenate([x_, z_], 1), y_[:, 0])
                     QSL.train_superlearner(np.concatenate([x_, z_], 1), y_[:, 0])
 
-                    Q10 = np.clip(QSL.estimation(np.concatenate([x_, z_], 1), y_[:, 0]),
-                                  a_min=0.025, a_max=0.975)
-                    Q1 = np.clip(QSL.estimation(np.concatenate([x_int1_, z_], 1), y_[:, 0]),
-                                 a_min=0.025, a_max=0.975)
-                    Q0 = np.clip(QSL.estimation(np.concatenate([x_int0_, z_], 1), y_[:, 0]),
-                                 a_min=0.025, a_max=0.975)
+                    if self.output_type == 'categorical':
+                        Q10 = np.clip(QSL.estimation(np.concatenate([x_, z_], 1), y_[:, 0]),
+                                      a_min=0.025, a_max=0.975)
+                        Q1 = np.clip(QSL.estimation(np.concatenate([x_int1_, z_], 1), y_[:, 0]),
+                                     a_min=0.025, a_max=0.975)
+                        Q0 = np.clip(QSL.estimation(np.concatenate([x_int0_, z_], 1), y_[:, 0]),
+                                     a_min=0.025, a_max=0.975)
+                    else:
+                        Q10 = QSL.estimation(np.concatenate([x_, z_], 1), y_[:, 0])
+                        Q1 = QSL.estimation(np.concatenate([x_int1_, z_], 1), y_[:, 0])
+                        Q0 = QSL.estimation(np.concatenate([x_int0_, z_], 1), y_[:, 0])
 
-                    Gest_dict = {'LR': LogisticRegression(), 'SVC': SVC(probability=True),
-                                 'RF': RandomForestClassifier(), 'KNN': KNeighborsClassifier(),
-                                 'AB': AdaBoostClassifier(), 'poly': 'poly'}
+                    Gest_dict = init_super_dict('categorical')
 
-
-                    GSL = SuperLearner(output=self.output, est_dict=Gest_dict, k=self.k)
+                    GSL = SuperLearner(output='cls', est_dict=Gest_dict, k=self.k)
                     GSL.train_combiner(z_, x_[:, 0])
                     GSL.train_superlearner(z_, x_[:, 0])
                     G10 = np.clip(GSL.estimation(z_, x_[:, 0]), a_min=0.025, a_max=0.975)
 
                     # submodel approach
-                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10)
+                    Q1_star_solve, Q0_star_solve = submodel(x_, y_, Q1, Q0, Q10, G10, outcome_type=self.output_type)
 
                     # one step approach
                     Q1_star, Q0_star = one_step(x_, y_, Q0, Q1, G10)
@@ -651,7 +680,7 @@ class TrainTest(object):
                     estimates_upd_1s_SL.append((Q1_star - Q0_star).mean())
 
                 i += 1
-
+                tuning_count +=1
 
             except Exception as exc:
                 print(traceback.format_exc())

@@ -51,7 +51,8 @@ class QNet(nn.Module):
             out0 = torch.sigmoid(logit_0)
             out1 = torch.sigmoid(logit_1)
         elif self.output_type == 'continuous':
-            pass
+            out0 = logit_0
+            out1 = logit_1
 
         cond = X.bool()
         return torch.where(cond, out1, out0), torch.where(cond, logit_0, logit_1)
@@ -111,8 +112,13 @@ class Trainer(object):
                                                               patience=self.window_length // 2)
 
         self.bce_loss_func = nn.BCELoss(reduction='none')
-        self.mse_loss = nn.MSELoss()
+        self.mse_loss_func = nn.MSELoss()
 
+
+    def mse_loss(self, a, b):
+        assert (torch.isnan(a)).sum() == 0, print('predictions contain nan value(s)')
+        assert (torch.isnan(b)).sum() == 0, print('targets contain nan value(s)')
+        return self.mse_loss_func(a, b)
 
     def bce_loss(self, a, b):
         assert(a < 0).sum() == 0 and (a > 1).sum() == 0, print('predictions out of bounds')
@@ -164,6 +170,7 @@ class Trainer(object):
             if self.net_type == 'Q':
                 x_pred_batch = x_pred_train[inds]
                 pred, _ = self.net(x_batch, z_batch)
+
                 treg_loss = self.beta * self.treg(x_batch, x_pred_batch, y_batch, pred)
                 if self.outcome_type == 'categorical':
                     loss = self.bce_loss(pred, y_batch).mean()
@@ -176,10 +183,8 @@ class Trainer(object):
 
             elif self.net_type == 'G':
                 pred, _ = self.net(z_batch)
-                if self.outcome_type == 'categorical':
-                    loss = self.bce_loss(pred, x_batch).mean()
-                else:
-                    loss = self.mse_loss(pred, x_batch)
+                loss = self.bce_loss(pred, x_batch).mean()
+
 
             loss.backward(retain_graph=True)
             self.optimizer.step()
@@ -203,10 +208,8 @@ class Trainer(object):
 
                 elif self.net_type == 'G':
                     pred, _ = self.net(z_train[:len(x_val)])
-                    if self.outcome_type == 'categorical':
-                        loss = self.bce_loss(pred, x_train[:len(x_val)]).mean()
-                    else:
-                        loss = self.mse_loss(pred, x_train[:len(x_val)])
+                    loss = self.bce_loss(pred, x_train[:len(x_val)]).mean()
+
 
             if (it > 0) and (it % self.test_iter == 0):
                 train_losses.append(loss.item())
@@ -271,10 +274,8 @@ class Trainer(object):
 
         elif self.net_type == 'G':
             pred, logits = model(z)
-            if self.outcome_type == 'categorical':
-                loss = self.bce_loss(pred, x).mean()
-            else:
-                loss = self.mse_loss(pred, x)
+            loss = self.bce_loss(pred, x).mean()
+
 
         return loss, pred, logits
 
@@ -292,10 +293,11 @@ class Trainer(object):
 
 
 class Tuner(object):
-    def __init__(self, x, y, z, trials, x_pred=None, test_loss_plot=False,
+    def __init__(self, x, y, z, trials, x_pred=None, test_loss_plot=False, output_type='categorical',
                  test_iter=5, net_type='Q', best_params=None, use_beta=True, use_t=True, calibration=0, device='cpu'):
         self.net_type = net_type
         self.best_params = best_params
+        self.output_type = output_type
         self.x = x
         self.y = y
         self.z = z
@@ -313,9 +315,7 @@ class Tuner(object):
 
     def tune(self):
 
-        output_type = 'categorical'
         output_size = 1
-
         if self.net_type == 'Q':
             input_size = self.z.shape[-1] + 1  # we will concatenate the treatment var inside the qnet class
 
@@ -348,13 +348,14 @@ class Tuner(object):
                 bs_.append(bs)
                 iters = np.random.randint(1000, 5000) if self.best_params == None else self.best_params['iters']
                 iters_.append(iters)
-                lr = np.random.uniform(0.0001, 0.01) if self.best_params == None else self.best_params['lr']
-                lr_.append(lr)
+                lr = np.random.uniform(0.0001, 0.005) if self.best_params == None else self.best_params['lr']
                 if self.use_beta:
-                    beta = np.random.uniform(0.99, 1.01) if self.best_params == None else self.best_params['beta']
+                    beta = 1.0 if self.best_params == None else self.best_params['beta']
+                    lr = 0.0001
                 else:
                     beta = 0.0
                 beta_.append(beta)
+                lr_.append(lr)
                 layers = np.random.randint(2, 20) if self.best_params == None else self.best_params['layers']
                 layers_.append(layers)
                 dropout = np.random.uniform(0.1, 0.5) if self.best_params == None else self.best_params['dropout']
@@ -369,13 +370,13 @@ class Tuner(object):
                 if self.net_type == 'Q':
                     self.net = QNet(input_size=input_size, num_layers=layers,
                                     layers_size=layer_size, output_size=output_size,
-                                    output_type=output_type, dropout=dropout, use_t=self.use_t).to(self.device)
+                                    output_type=self.output_type, dropout=dropout, use_t=self.use_t).to(self.device)
                 elif self.net_type == 'G':
                     self.net = GNet(input_size=input_size, num_layers=layers,
                                     layers_size=layer_size, output_size=output_size,
-                                    output_type=output_type, dropout=dropout).to(self.device)
+                                    output_type=self.output_type, dropout=dropout).to(self.device)
 
-                trainer = Trainer(net=self.net, net_type=self.net_type, beta=beta, outcome_type=output_type,
+                trainer = Trainer(net=self.net, net_type=self.net_type, beta=beta, outcome_type=self.output_type,
                                   test_loss_plot=self.test_loss_plot, device=self.device,
                                   iterations=iters, batch_size=bs, test_iter=self.test_iter, weight_reg=weight_reg,
                                   lr=lr, calibration=self.calibration, split=True)

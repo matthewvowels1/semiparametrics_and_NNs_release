@@ -90,8 +90,13 @@ class QMultiNet(nn.Module):
 
         cond = X.bool().repeat(self.num_layers, 1).reshape(self.num_layers, bs, 1)
         logits_out = torch.where(cond, outs_pos, outs_neg)
+
+        if self.output_type == 'categorical':
+            sig_out = torch.sigmoid(logits_out)
+        else:
+            sig_out = logits_out
         # each output is (num layers, batch_dim, output_size)
-        return torch.sigmoid(logits_out), logits_out
+        return sig_out, logits_out
 
 
 class GMultiNet(nn.Module):
@@ -214,7 +219,12 @@ class MultiNetTrainer(object):
             #                                                       patience=self.window_length // 2)
 
         self.bce_loss_func = nn.BCELoss(reduction='none')
-        self.mse_loss = nn.MSELoss(reduction='none')
+        self.mse_loss_func = nn.MSELoss()
+
+    def mse_loss(self, a, b):
+        assert (torch.isnan(a)).sum() == 0, print('predictions contain nan value(s)')
+        assert (torch.isnan(b)).sum() == 0, print('targets contain nan value(s)')
+        return self.mse_loss_func(a, b)
 
     def bce_loss(self, a, b):
         assert (a < 0).sum() == 0 and (a > 1).sum() == 0, print('predictions out of bounds')
@@ -303,10 +313,8 @@ class MultiNetTrainer(object):
                         mask = torch.tensor(np.asarray([b in chunk_mask for b in inds]).astype('float'), dtype=torch.float32).to(self.device)
                     else:
                         mask = torch.tensor([1.0]).to(self.device)
-                    if self.outcome_type == 'categorical':
-                        ll = (mask * self.bce_loss(pred[nl, :, :], x_batch)).mean()
-                    else:
-                        ll = (mask * self.mse_loss(pred[nl, :, :], x_batch)).mean()
+
+                    ll = (mask * self.bce_loss(pred[nl, :, :], x_batch)).mean()
 
                     if self.layerwise_optim:
                         loss['layer_{}'.format(nl)] = ll
@@ -369,10 +377,9 @@ class MultiNetTrainer(object):
                                                 dtype=torch.float32).to(self.device)
                         else:
                             mask = torch.tensor([1.0]).to(self.device)
-                        if self.outcome_type == 'categorical':
-                            ll = (mask * self.bce_loss(pred[nl, :, :], x_train[:len(x_val)])).mean()
-                        else:
-                            ll = (mask * self.mse_loss(pred[nl, :, :], x_train[:len(x_val)])).mean()
+
+                        ll = (mask * self.bce_loss(pred[nl, :, :], x_train[:len(x_val)])).mean()
+
                         if self.layerwise_optim:
                             loss['layer_{}'.format(nl)] = ll
                             total_loss = sum(loss.values())
@@ -444,10 +451,8 @@ class MultiNetTrainer(object):
             pred, logits = model(z)
             loss = 0
             for nl in range(model.num_layers):
-                if self.outcome_type == 'categorical':
-                    loss += self.bce_loss(pred[nl, :, :], gts).mean()
-                else:
-                    loss += self.mse_loss(pred[nl, :, :], gts)
+                loss += self.bce_loss(pred[nl, :, :], gts).mean()
+
         pred = torch.permute(pred, (1, 2, 0))  # output is [bs, num cats, num layers]
         return loss, pred, logits
 
@@ -461,14 +466,16 @@ class MultiNetTrainer(object):
         elif self.outcome_type == 'continuous':
             y_pert = pred_y + self.net.epsilon * h
             t_reg = (y - y_pert) ** 2
+
         return t_reg
 
 
 class MultiNetTuner(object):
-    def __init__(self, x, y, z, trials, x_pred=None, test_loss_plot=False, data_masking=0,
+    def __init__(self, x, y, z, trials, x_pred=None, test_loss_plot=False, data_masking=0, output_type='categorical',
                  test_iter=5, net_type='Q', best_params=None, use_beta=True, use_t=True, layerwise_optim=0, device='cpu'):
         self.net_type = net_type
         self.device = device
+        self.output_type = output_type
         if self.device != 'cpu':
             torch.set_default_tensor_type(torch.cuda.FloatTensor)
         self.best_params = best_params
@@ -489,7 +496,6 @@ class MultiNetTuner(object):
 
     def tune(self):
 
-        output_type = 'categorical'
         output_size = 1
 
         if self.net_type == 'Q':
@@ -524,13 +530,14 @@ class MultiNetTuner(object):
                 bs_.append(bs)
                 iters = np.random.randint(2000, 10000) if self.best_params == None else self.best_params['iters']
                 iters_.append(iters)
-                lr = np.random.uniform(0.0001, 0.01) if self.best_params == None else self.best_params['lr']
-                lr_.append(lr)
+                lr = np.random.uniform(0.0001, 0.005) if self.best_params == None else self.best_params['lr']
                 if self.use_beta:
-                    beta = np.random.uniform(0.99, 1.01) if self.best_params == None else self.best_params['beta']
+                    beta = 1.0 if self.best_params == None else self.best_params['beta']
+                    lr = 0.0001
                 else:
                     beta = 0.0
                 beta_.append(beta)
+                lr_.append(lr)
                 layers = np.random.randint(4, 14) if self.best_params == None else self.best_params['layers']
                 layers_.append(layers)
                 dropout = np.random.uniform(0.1, 0.5) if self.best_params == None else self.best_params['dropout']
@@ -545,13 +552,13 @@ class MultiNetTuner(object):
                 if self.net_type == 'Q':
                     self.net = QMultiNet(input_size=input_size, num_layers=layers,
                                     layers_size=layer_size, output_size=output_size, device=self.device,
-                                    output_type=output_type, dropout=dropout, use_t=self.use_t, layerwise_optim=self.layerwise_optim).to(self.device)
+                                    output_type=self.output_type, dropout=dropout, use_t=self.use_t, layerwise_optim=self.layerwise_optim).to(self.device)
                 elif self.net_type == 'G':
                     self.net = GMultiNet(input_size=input_size, num_layers=layers,
                                     layers_size=layer_size, output_size=output_size, device=self.device,
-                                    output_type=output_type, dropout=dropout, layerwise_optim=self.layerwise_optim).to(self.device)
+                                    output_type=self.output_type, dropout=dropout, layerwise_optim=self.layerwise_optim).to(self.device)
 
-                trainer = MultiNetTrainer(net=self.net, net_type=self.net_type, beta=beta, outcome_type=output_type,
+                trainer = MultiNetTrainer(net=self.net, net_type=self.net_type, beta=beta, outcome_type=self.output_type,
                                   test_loss_plot=self.test_loss_plot, data_masking=self.data_masking, device=self.device,
                                   iterations=iters, batch_size=bs, test_iter=self.test_iter, weight_reg=weight_reg,
                                   lr=lr, split=True, layerwise_optim=self.layerwise_optim)

@@ -1,4 +1,4 @@
-# semiparametrics_and_NNs_release
+# Semiparametrics and NNs (initial release)
 Release code for experiments on influence functions with neural networks
 
 
@@ -41,4 +41,6 @@ python3 main.py --run RUN3 --N 5000 --starting_iter 0 --num_tuning_trials 50 --n
 python3 main.py --run RUN4 --N 5000 --starting_iter 0 --num_tuning_trials 50 --num_runs 100 --data_rand 1 --super_learner_k 10 --run_SL 1 --run_treg 1 --run_LR 1 --run_NN 1 --run_NN_SL 1 --run_treg_SL 1 --run_NN_or_multinet 1 --data_masking 1 --layerwise_optim 1 --calibration 0  --dataset synth1
 ```
 
-Change the dataset with the ```--dataset``` flag, set to ```synth1``` (LF v1), ```synth2``` (LF v2), ```synth3``` (LF v3), or ```IHDP```
+Change the dataset with the ```--dataset``` flag, set to ```synth1``` (LF v1), ```synth2``` (LF v2), ```synth3``` (LF v3), or ```IHDP```. For IHDP, sample size flag is ignored.
+
+If GPU support is available you can add the ```--gpu 1``` flag, although we have found that owing to the high I/O speed in this script it is not necessarily faster that CPU.

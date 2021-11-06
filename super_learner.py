@@ -1,5 +1,7 @@
 import numpy as np
 from sklearn.model_selection import KFold
+from sklearn.metrics import balanced_accuracy_score
+from sklearn.metrics import r2_score
 from scipy.optimize import minimize
 from scipy.optimize import nnls
 from sklearn.linear_model import LinearRegression, LogisticRegression
@@ -31,6 +33,7 @@ def combiner_solve(x, y):
 
 class SuperLearner(object):
 	def __init__(self, output, est_dict, k):
+		self.output = output
 		self.k = k  # number of cross validation folds
 		self.beta = None
 		self.trained_superlearner = None
@@ -62,7 +65,8 @@ class SuperLearner(object):
 
 			kf = KFold(n_splits=self.k, shuffle=True, random_state=0)
 
-			probs = []
+			if self.output == 'proba' or (self.output == 'cls'):
+				probs = []
 			preds = []
 			gts = []
 
@@ -79,8 +83,6 @@ class SuperLearner(object):
 					poly = PolynomialFeatures(2)
 					x_train = poly.fit_transform(x_train)
 					x_test = poly.fit_transform(x_test)
-				# x_train = (2 * (x_train - self.x_min) / (self.x_max_sq - self.x_min)) - 1
-				# x_test = (2 * (x_test - self.x_min) / (self.x_max_sq - self.x_min)) - 1
 
 				est.fit(x_train, y_train)
 
@@ -95,9 +97,11 @@ class SuperLearner(object):
 				gts.append(y_test)
 
 			preds = np.concatenate(preds)
-			probs = np.concatenate(probs)
+			if self.output == 'proba' or (self.output == 'cls'):
+				probs = np.concatenate(probs)
 			if num_classes == 1:
-				probs = probs[:, 1].reshape(-1, 1)
+				if self.output == 'proba' or (self.output == 'cls'):
+					probs = probs[:, 1].reshape(-1, 1)
 				preds = preds.reshape(-1, 1)
 
 			gts = np.concatenate(gts)
@@ -148,7 +152,7 @@ class SuperLearner(object):
 			if (self.output == 'cls') or self.output == 'proba':
 				preds = est.predict_proba(x)[:, 1] if key != 'poly' else est.predict_proba(x_scaled)[:, 1]
 			else:
-				preds = est.predict(x) if key != 'poly' else est.predict_proba(x_scaled)[:, 1]
+				preds = est.predict(x) if key != 'poly' else est.predict(x_scaled)
 			all_preds[:, i] = preds
 
 			i += 1
