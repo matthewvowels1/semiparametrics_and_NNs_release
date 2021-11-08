@@ -66,15 +66,15 @@ class TrainTest(object):
 		self.num_tuning_trials = config.num_tuning_trials  # number of trials for hyperparameter search
 		self.test_iter = 100  # number of "weight updates" between model testing
 		self.run_SL = config.run_SL
-		self.run_treg = config.run_treg
 		self.run_LR = config.run_LR
+		self.run_LR_SL = config.run_LR_SL
 		self.run_NN = config.run_NN
+		self.run_treg = config.run_treg
 		self.run_NN_SL = config.run_NN_SL
 		self.run_treg_SL = config.run_treg_SL
 		self.multinet = config.run_NN_or_multinet
 		self.SL_output = config.SL_output
 		self.dataset = config.dataset
-		self.starting_iter = config.starting_iter
 		self.gpu = config.gpu
 		self.device = 'cpu'
 
@@ -96,6 +96,9 @@ class TrainTest(object):
 			self.calibration = config.calibration
 			self.data_masking = 0
 			self.layerwise_optim = 0
+
+		if self.run_LR_SL:
+			self.run_LR = 1
 		print('Running: ', self.run)
 
 	def train_test(self):
@@ -127,7 +130,9 @@ class TrainTest(object):
 
 		estimates_naive_LR = []
 		estimates_upd_1s_LR = []
+		estimates_upd_1s_LR_SL = []
 		estimates_upd_submod_LR = []
+		estimates_upd_submod_LR_SL = []
 		estimates_naive_SL = []
 		estimates_upd_1s_SL = []
 		estimates_upd_submod_SL = []
@@ -142,6 +147,7 @@ class TrainTest(object):
 		tuning_count = 0
 		print('Starting from seed', i)
 
+		# set defaults to nan for easy postprocessing when not all runs are undertaken
 		sample_psi = np.nan
 		biased_psi_nn = np.nan
 		upd_1s = np.nan
@@ -156,6 +162,7 @@ class TrainTest(object):
 		upd_submod_LR = np.nan
 		biased_psi_LR = np.nan
 		upd_1s_LR = np.nan
+		upd_1s_LR_SL = np.nan
 		upd_submod_SL = np.nan
 		biased_psi_SL = np.nan
 		upd_1s_SL = np.nan
@@ -413,7 +420,7 @@ class TrainTest(object):
 						Q0 = np.dot(Q0, qbetas_bm)
 						G10 = np.dot(G10, gbetas_bm)
 
-					G10 = np.clip(G10, a_min=0.025, a_max=0.9975)
+					G10 = np.clip(G10, a_min=0.025, a_max=0.975)
 
 					biased_psi_nn = (Q1 - Q0).mean()
 					# record initial estimate
@@ -692,6 +699,21 @@ class TrainTest(object):
 					Q1_star_1s_LR, Q0_star_1s_LR = one_step(x_, y_, Q0, Q1, G10)
 					upd_1s_LR = (Q1_star_1s_LR - Q0_star_1s_LR).mean()
 
+				if self.run_LR_SL:
+					Gest_dict = init_super_dict('categorical')
+					GSL = SuperLearner(output='cls', est_dict=Gest_dict, k=self.k)
+					GSL.train_combiner(z_, x_[:, 0])
+					GSL.train_superlearner(z_, x_[:, 0])
+					G10 = np.clip(GSL.estimation(z_, x_[:, 0]), a_min=0.025, a_max=0.975)
+
+					Q1_star_solve_submod_LR_SL, Q0_star_solve_submod_LR_SL = submodel(x_, y_, Q1, Q0, Q10, G10,
+					                                                                  outcome_type=self.output_type)
+					upd_submod_LR_SL = (Q1_star_solve_submod_LR_SL - Q0_star_solve_submod_LR_SL).mean()
+
+					# one step approach
+					Q1_star_1s_LR_SL, Q0_star_1s_LR_SL = one_step(x_, y_, Q0, Q1, G10)
+					upd_1s_LR_SL = (Q1_star_1s_LR_SL - Q0_star_1s_LR_SL).mean()
+
 				if self.run_SL:
 					print('Running SL...')
 					# ------------------------SUPER LEARNER------------------------------------------------------------
@@ -747,7 +769,8 @@ class TrainTest(object):
 				estimates_upd_submod_LR.append(upd_submod_LR)
 				estimates_naive_LR.append(biased_psi_LR)
 				estimates_upd_1s_LR.append(upd_1s_LR)
-
+				estimates_upd_submod_LR_SL.append(upd_submod_LR_SL)
+				estimates_upd_1s_LR_SL.append(upd_1s_LR_SL)
 				estimates_upd_submod_SL.append(upd_submod_SL)
 				estimates_naive_SL.append(biased_psi_SL)
 				estimates_upd_1s_SL.append(upd_1s_SL)

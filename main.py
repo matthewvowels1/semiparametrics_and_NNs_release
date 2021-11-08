@@ -20,6 +20,7 @@ if __name__ == "__main__":
     parser.add_argument("--super_learner_k", default=10, type=int)  # number of folds in k-fold SL fit algo
     parser.add_argument("--run_SL", default=0, type=int)   # fit SL model on its own (not required for NN_SL combinations)
     parser.add_argument("--run_LR", default=0, type=int)  # fit logistic or linear regression
+    parser.add_argument("--run_LR_SL", default=0, type=int)  # run logistic regression with SL as propensity model
     parser.add_argument("--run_NN", default=1, type=int)  # set to 1 if EITHER CFR or multinet are required
     parser.add_argument("--run_treg", default=1, type=int)  # use targeted regularization (if training NN/multinet)
     parser.add_argument("--run_NN_SL", default=1, type=int)  #  NN/multinet w/ SL propensity model
