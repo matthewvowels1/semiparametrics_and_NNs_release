@@ -700,6 +700,7 @@ class TrainTest(object):
 					upd_1s_LR = (Q1_star_1s_LR - Q0_star_1s_LR).mean()
 
 				if self.run_LR_SL:
+					print('Running LR + SL')
 					Gest_dict = init_super_dict('categorical')
 					GSL = SuperLearner(output='cls', est_dict=Gest_dict, k=self.k)
 					GSL.train_combiner(z_, x_[:, 0])
