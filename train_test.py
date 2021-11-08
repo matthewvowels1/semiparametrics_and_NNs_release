@@ -75,6 +75,7 @@ class TrainTest(object):
 		self.multinet = config.run_NN_or_multinet
 		self.SL_output = config.SL_output
 		self.dataset = config.dataset
+		self.starting_iter = config.starting_iter
 		self.gpu = config.gpu
 		self.device = 'cpu'
 
@@ -700,7 +701,7 @@ class TrainTest(object):
 					upd_1s_LR = (Q1_star_1s_LR - Q0_star_1s_LR).mean()
 
 				if self.run_LR_SL:
-					print('Running LR + SL')
+					print('Running LR + SL...')
 					Gest_dict = init_super_dict('categorical')
 					GSL = SuperLearner(output='cls', est_dict=Gest_dict, k=self.k)
 					GSL.train_combiner(z_, x_[:, 0])
@@ -792,7 +793,7 @@ class TrainTest(object):
 			             'naive_LR', 'submodel_LR', 'one_step_LR',
 			             'naive_SL', 'submodel_SL', 'one_step_SL',
 			             'naive_halfSL', 'submodel_halfSL', 'one_step_halfSL', 'treg_halfSL', 'treg_submod_halfSL',
-			             'sample_truth', 'seeds']
+			             'LR_submod_halfSL', 'LR_onestep_halfSL', 'sample_truth', 'seeds']
 
 			if self.multinet:
 				betas_q_ = np.asarray(betas_q)
@@ -813,7 +814,8 @@ class TrainTest(object):
 			                   estimates_naive_LR, estimates_upd_submod_LR, estimates_upd_1s_LR,
 			                   estimates_naive_SL, estimates_upd_submod_SL, estimates_upd_1s_SL,
 			                   estimates_naive_halfSL, estimates_upd_submod_halfSL, estimates_upd_1s_halfSL,
-			                   estimates_upd_treg_halfSL, estimates_upd_treg_submod_halfSL, sample_truth, seeds]).T
+			                   estimates_upd_treg_halfSL, estimates_upd_treg_submod_halfSL, estimates_upd_submod_LR_SL,
+			                   estimates_upd_1s_LR_SL, sample_truth, seeds]).T
 			df.columns = col_names
 			df.to_csv(
 				self.fn + '{}_Results_t_predictor_{}_datarand_{}_{}_multinet_{}_datamask_{}_layerwise_{}_{}_{}_start_iter_{}.csv'.format(
