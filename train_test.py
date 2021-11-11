@@ -161,6 +161,7 @@ class TrainTest(object):
 		upd_psi_treg_halfSL = np.nan
 		upd_treg_submod_halfSL = np.nan
 		upd_submod_LR = np.nan
+		upd_submod_LR_SL = np.nan
 		biased_psi_LR = np.nan
 		upd_1s_LR = np.nan
 		upd_1s_LR_SL = np.nan
