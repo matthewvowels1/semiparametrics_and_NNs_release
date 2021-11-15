@@ -494,7 +494,7 @@ class MultiNetTuner(object):
         self.use_t = use_t
         self.test_loss_plot = test_loss_plot
 
-    def tune(self):
+    def tune(self, run):
 
         output_size = 1
 
@@ -521,6 +521,7 @@ class MultiNetTuner(object):
 
         j = 0
         while j < self.trials:
+            print('Tuning for RUN: {}'.format(run))
             try:
                 # sample hyper params and store the history
                 weight_reg = np.random.uniform(0.00001, 0.001) if self.best_params == None else self.best_params[

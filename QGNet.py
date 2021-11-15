@@ -313,7 +313,7 @@ class Tuner(object):
         self.calibration = calibration
         self.device = device
 
-    def tune(self):
+    def tune(self, run):
 
         output_size = 1
         if self.net_type == 'Q':
@@ -339,6 +339,7 @@ class Tuner(object):
 
         j = 0
         while j < self.trials:
+            print('Tuning for RUN: {}'.format(run))
             try:
                 # sample hyper params and store the history
                 weight_reg = np.random.uniform(0.00001, 0.001) if self.best_params == None else self.best_params[

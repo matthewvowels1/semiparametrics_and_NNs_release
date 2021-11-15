@@ -145,8 +145,8 @@ class TrainTest(object):
 		# init seed
 		seed = self.starting_iter  # this was set to 100 previously (no reason)
 		i = self.starting_iter
-		tuning_count = 0
-		print('Starting from seed', i)
+		tuning_count = -1
+		print('Starting from seed', seed)
 
 		# set defaults to nan for easy postprocessing when not all runs are undertaken
 		sample_psi = np.nan
@@ -170,10 +170,13 @@ class TrainTest(object):
 		upd_1s_SL = np.nan
 
 		while (i - self.starting_iter) < self.num_runs:
+			tuning_count += 1
 
+			run_string = '{} out of {} successful. {} in total'.format(len(sample_truth), tuning_count, self.num_runs)
 			try:
 				print('=====================RUN {} of {}==================='.format(i - self.starting_iter,
 				                                                                    self.num_runs - 1))
+				print('Number of Successful RUNS: ', len(sample_truth))
 				if self.data_rand:
 					if self.dataset != 'IHDP':
 						z_, x_, y_, Y1, Y0 = generate_data(N=self.N, seed=seed, dataset=self.dataset)
@@ -217,7 +220,7 @@ class TrainTest(object):
 						               trials=self.num_tuning_trials, use_beta=False, use_t=use_t,
 						               test_loss_plot=test_loss_plot, output_type='categorical')
 
-					gtuning_history, best_g, x_pred, _ = gtuner.tune()
+					gtuning_history, best_g, x_pred, _ = gtuner.tune(run=run_string)
 
 					gtotal_losses = np.asarray(gtuning_history['best_model_test_loss'])
 					gbest_index = np.argmin(gtotal_losses)
@@ -238,7 +241,7 @@ class TrainTest(object):
 						               calibration=0, device=self.device,
 						               trials=self.num_tuning_trials, use_beta=False, use_t=use_t,
 						               test_loss_plot=test_loss_plot, output_type=self.output_type)
-					qtuning_history, best_q, _, eps = qtuner.tune()
+					qtuning_history, best_q, _, eps = qtuner.tune(run=run_string)
 
 					qtotal_losses = np.asarray(qtuning_history['best_model_test_loss'])
 					qbest_index = np.argmin(qtotal_losses)
@@ -259,7 +262,7 @@ class TrainTest(object):
 						                   calibration=0, output_type=self.output_type,
 						                   trials=self.num_tuning_trials, use_beta=True, use_t=use_t,
 						                   test_loss_plot=test_loss_plot, device=self.device)
-					qtregtuning_history, best_qtreg, _, epstreg = qtregtuner.tune()
+					qtregtuning_history, best_qtreg, _, epstreg = qtregtuner.tune(run=run_string)
 
 					qtregtotal_losses = np.asarray(qtregtuning_history['best_model_test_loss'])
 					qtregbest_index = np.argmin(qtregtotal_losses)
@@ -781,14 +784,18 @@ class TrainTest(object):
 
 				seed += 1
 				i += 1
-				tuning_count += 1
+
 
 
 			except Exception as exc:
 				print(traceback.format_exc())
 				print(exc)
 				exc
-				print('Error training one of the models, restarting run')
+				if self.dataset == 'IHDP':
+					print('Error training one of the models, restarting run')
+				else:
+					seed += 1
+					print('Error training one of the models, restarting run at next seed {}', seed)
 
 			col_names = ['naive', 'submodel', 'one_step', 'treg', 'treg_submod',
 			             'naive_LR', 'submodel_LR', 'one_step_LR',
