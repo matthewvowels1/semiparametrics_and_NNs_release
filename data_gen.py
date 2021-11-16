@@ -17,8 +17,6 @@ def generate_data(N, seed, dataset):
     z4 = np.round(np.random.uniform(0, 5, (N, 1)), 0)
     if dataset == 'synth1' or dataset == 'synth2':
         xp = sigm(-5 + 0.05 * z2 + 0.25 * z3 + 0.6 * z4 + 0.4 * z2 * z4)
-    elif dataset == 'synth3':
-        xp = sigm(np.exp(-5 + 0.05 * z2 + 0.25 * z3 + 0.6 * z4 + 0.4 * z2 * z4) - 2)
     if dataset == 'synth1':
         Y1 = np.random.binomial(1, sigm(-1 + 1 - 0.1 * z1 + 0.35 * z2 + 0.25 * z3 + 0.2 * z4 + 0.15 * z2 * z4), (N, 1))
         Y0 = np.random.binomial(1, sigm(-1 + 0 - 0.1 * z1 + 0.35 * z2 + 0.25 * z3 + 0.2 * z4 + 0.15 * z2 * z4), (N, 1))
@@ -26,11 +24,6 @@ def generate_data(N, seed, dataset):
         Y1 = np.random.binomial(1, sigm(np.exp(-1 - 0.1 * z1 + 0.35 * z2 + 0.25 * z3 + 0.2 * z4 + 0.15 * z2 * z4)),
                                 (N, 1))
         Y0 = np.random.binomial(1, sigm(-1 - 0.1 * z1 + 0.35 * z2 + 0.25 * z3 + 0.2 * z4 + 0.15 * z2 * z4), (N, 1))
-    elif dataset == 'synth3':
-        Y1 = np.random.binomial(1, sigm(np.exp(-1 + 1 - 0.1 * z1 + 0.35 * z2 + 0.25 * z3 + 0.2 * z4 + 0.15 * z2 * z4)),
-                                (N, 1))
-        Y0 = np.random.binomial(1, sigm(-1 + 0 - 0.1 * z1 + 0.35 * z2 + 0.25 * z3 + 0.2 * z4 + 0.15 * z2 * z4), (N, 1))
-
     X = np.random.binomial(1, xp, (N, 1))
     Y = Y1 * X + Y0 * (1 - X)
     Z = np.concatenate([z1, z2, z3, z4], 1)
