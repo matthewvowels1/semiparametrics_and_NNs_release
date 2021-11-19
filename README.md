@@ -1,6 +1,7 @@
 # Semiparametrics and NNs (initial release)
-Release code for experiments on influence functions with neural networks
 
+## 1. Experiments and Models 
+Release code for experiments on influence functions with neural networks. See below for code for automatic derivation of IFs.
 
 Required Libraries and Packages:
 
@@ -44,3 +45,10 @@ python3 main.py --run RUN4 --N 5000 --starting_iter 0 --num_tuning_trials 50 --n
 Change the dataset with the ```--dataset``` flag, set to ```synth1``` (LF v1), ```synth2``` (LF v2), ```synth3``` (LF v3), or ```IHDP```. For IHDP, sample size flag is ignored.
 
 If GPU support is available you can add the ```--gpu 1``` flag, although we have found that owing to the high I/O speed in this script it is not necessarily faster that CPU.
+
+
+## 2. Automatically Deriving IFs
+
+Required Libraries and Packages:
+
+causaleffect; pycairo; 
